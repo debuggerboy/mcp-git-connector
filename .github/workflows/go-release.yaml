@@ -9,6 +9,7 @@ jobs:
   build-and-release:
     name: Build Go Binaries and Create Release
     runs-on: ubuntu-latest
+    permissions: write-all
 
     env:
       RELEASE_NAME_PREFIX: "Release"
@@ -34,6 +35,7 @@ jobs:
 
       - name: Build binaries for Linux, macOS, Windows
         run: |
+          go mod tidy
           mkdir -p dist
           GOOS=linux GOARCH=amd64 go build -o dist/app-linux-amd64 .
           GOOS=darwin GOARCH=amd64 go build -o dist/app-darwin-amd64 .
