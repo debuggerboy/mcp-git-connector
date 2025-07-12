@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/yourusername/mcp-server/repository"
+	"github.com/debuggerboy/mcp-git-connector/repository"
 )
 
 type MCPHandler struct {
@@ -33,8 +33,8 @@ func (h *MCPHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 type CloneRequest struct {
-	RepoURL    string `json:"repo_url"`
-	RepoName   string `json:"repo_name"`
+	RepoURL  string `json:"repo_url"`
+	RepoName string `json:"repo_name"`
 }
 
 func (h *MCPHandler) CloneRepositoryHandler(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +57,7 @@ func (h *MCPHandler) CloneRepositoryHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	response := map[string]string{
-		"status":   "success",
+		"status":    "success",
 		"repo_path": repoPath,
 	}
 	json.NewEncoder(w).Encode(response)
@@ -218,9 +218,9 @@ func (h *MCPHandler) PushChangesHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 type CodeReviewRequest struct {
-	RepoPath string `json:"repo_path"`
-	FilePaths []string `json:"file_paths"`
-	Instructions string `json:"instructions"`
+	RepoPath     string   `json:"repo_path"`
+	FilePaths    []string `json:"file_paths"`
+	Instructions string   `json:"instructions"`
 }
 
 func (h *MCPHandler) RequestCodeReviewHandler(w http.ResponseWriter, r *http.Request) {
@@ -243,7 +243,7 @@ func (h *MCPHandler) RequestCodeReviewHandler(w http.ResponseWriter, r *http.Req
 			http.Error(w, fmt.Sprintf("Failed to read file %s: %v", filePath, err), http.StatusInternalServerError)
 			return
 		}
-		
+
 		filesForReview = append(filesForReview, map[string]string{
 			"file_path": filePath,
 			"content":   content,
@@ -265,14 +265,14 @@ func (h *MCPHandler) callOllamaForReview(files []map[string]string, instructions
 	var prompt strings.Builder
 	prompt.WriteString("Please review the following code files and provide feedback based on these instructions:\n")
 	prompt.WriteString(instructions + "\n\n")
-	
+
 	for _, file := range files {
 		prompt.WriteString(fmt.Sprintf("File: %s\n", file["file_path"]))
 		prompt.WriteString("Content:\n```\n")
 		prompt.WriteString(file["content"])
 		prompt.WriteString("\n```\n\n")
 	}
-	
+
 	prompt.WriteString("Please provide your review with:\n")
 	prompt.WriteString("- Code quality assessment\n")
 	prompt.WriteString("- Suggested improvements\n")
