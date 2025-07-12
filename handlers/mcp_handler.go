@@ -13,10 +13,15 @@ import (
 
 type MCPHandler struct {
 	repoManager *repository.GitManager
+	ollamaURL   string
 }
 
-func NewMCPHandler(rm *repository.GitManager) *MCPHandler {
-	return &MCPHandler{repoManager: rm}
+// Updated to accept ollamaURL parameter
+func NewMCPHandler(rm *repository.GitManager, ollamaURL string) *MCPHandler {
+	return &MCPHandler{
+		repoManager: rm,
+		ollamaURL:   ollamaURL,
+	}
 }
 
 // AuthMiddleware verifies the Bitbucket app password
@@ -262,6 +267,26 @@ func (h *MCPHandler) RequestCodeReviewHandler(w http.ResponseWriter, r *http.Req
 }
 
 func (h *MCPHandler) callOllamaForReview(files []map[string]string, instructions string) ([]map[string]interface{}, error) {
+	// Use h.ollamaURL instead of hardcoded URL
+	ollamaURL := h.ollamaURL + "/api/generate"
+	
+	requestBody := map[string]interface{}{
+		"model":  "llama3",
+		"prompt": buildPrompt(files, instructions),
+		"stream": false,
+	}
+
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %v", err)
+	}
+
+	resp, err := http.Post(ollamaURL, "application/json", strings.NewReader(string(jsonBody)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to call Ollama API: %v", err)
+	}
+	defer resp.Body.Close()
+
 	// Prepare the prompt for Ollama
 	var prompt strings.Builder
 	prompt.WriteString("Please review the following code files and provide feedback based on these instructions:\n")
@@ -321,4 +346,26 @@ func (h *MCPHandler) callOllamaForReview(files []map[string]string, instructions
 	}
 
 	return results, nil
+}
+
+func buildPrompt(files []map[string]string, instructions string) string {
+	var prompt strings.Builder
+	prompt.WriteString("Please review the following code files and provide feedback based on these instructions:\n")
+	prompt.WriteString(instructions + "\n\n")
+	
+	for _, file := range files {
+		prompt.WriteString(fmt.Sprintf("File: %s\n", file["file_path"]))
+		prompt.WriteString("Content:\n```\n")
+		prompt.WriteString(file["content"])
+		prompt.WriteString("\n```\n\n")
+	}
+	
+	prompt.WriteString("Please provide your review with:\n")
+	prompt.WriteString("- Code quality assessment\n")
+	prompt.WriteString("- Suggested improvements\n")
+	prompt.WriteString("- Any security concerns\n")
+	prompt.WriteString("- Best practices recommendations\n")
+	prompt.WriteString("- Specific code changes if applicable\n")
+
+	return prompt.String()
 }
