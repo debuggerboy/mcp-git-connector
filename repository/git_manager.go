@@ -1,4 +1,4 @@
-ipackage repository
+package repository
 
 import (
 	"fmt"
@@ -23,14 +23,14 @@ func NewGitManager(baseDir string) *GitManager {
 func (gm *GitManager) CloneRepository(repoURL, appPassword, repoName string) (string, error) {
 	// Format URL with authentication
 	authURL := strings.Replace(repoURL, "https://", fmt.Sprintf("https://x-token-auth:%s@", appPassword), 1)
-	
+
 	repoPath := filepath.Join(gm.baseDir, repoName)
-	
+
 	cmd := exec.Command("git", "clone", authURL, repoPath)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("git clone failed: %v, output: %s", err, string(output))
 	}
-	
+
 	return repoPath, nil
 }
 

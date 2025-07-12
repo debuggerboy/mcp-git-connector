@@ -1,21 +1,28 @@
 package main
 
 import (
-	"context"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
-	"time"
 
 	"github.com/debuggerboy/mcp-git-connector/handlers"
 	"github.com/debuggerboy/mcp-git-connector/repository"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	// Load environment variables from .env file
+	if err := godotenv.Load(); err != nil {
+		log.Printf("Warning: Couldn't load .env file: %v", err)
+	}
+
+	// Get configuration from environment with defaults
+	baseDir := getEnv("REPO_BASE_DIR", "/tmp/mcp-repos")
+	port := getEnv("SERVER_PORT", "8080")
+
 	// Initialize the repository manager
-	repoManager := repository.NewGitManager("/tmp/mcp-repos")
+	repoManager := repository.NewGitManager(baseDir)
+	//repoManager := repository.NewGitManager("/tmp/mcp-repos")
 
 	// Initialize HTTP handlers
 	mcpHandler := handlers.NewMCPHandler(repoManager)
@@ -31,7 +38,14 @@ func main() {
 	http.Handle("/api/llm/review", mcpHandler.AuthMiddleware(mcpHandler.RequestCodeReviewHandler))
 
 	// Start server
-	port := "8080"
 	log.Printf("Starting MCP server on port %s", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
+
+func getEnv(key, defaultValue string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	return value
 }
