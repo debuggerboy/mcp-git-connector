@@ -1,0 +1,52 @@
+name: Go Release Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-release:
+    name: Build Go Binaries and Create Release
+    runs-on: ubuntu-latest
+
+    env:
+      RELEASE_NAME_PREFIX: "Release"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Get current UTC date-time
+        id: datetime
+        run: echo "value=$(date -u +'%Y-%m-%dT%H-%M-%S')" >> "$GITHUB_OUTPUT"
+
+      - name: Set release name and tag
+        id: release_meta
+        run: |
+          echo "release_name=${{ env.RELEASE_NAME_PREFIX }}-${{ steps.datetime.outputs.value }}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=auto-${{ steps.datetime.outputs.value }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build binaries for Linux, macOS, Windows
+        run: |
+          mkdir -p dist
+          GOOS=linux GOARCH=amd64 go build -o dist/app-linux-amd64 .
+          GOOS=darwin GOARCH=amd64 go build -o dist/app-darwin-amd64 .
+          GOOS=windows GOARCH=amd64 go build -o dist/app-windows-amd64.exe
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "${{ steps.release_meta.outputs.release_name }}"
+          tag_name: "${{ steps.release_meta.outputs.tag_name }}"
+          files: |
+            dist/app-linux-amd64
+            dist/app-darwin-amd64
+            dist/app-windows-amd64.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
