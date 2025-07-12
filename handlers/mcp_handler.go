@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/debuggerboy/mcp-git-connector/repository"
 )
@@ -16,7 +18,6 @@ type MCPHandler struct {
 	ollamaURL   string
 }
 
-// Updated to accept ollamaURL parameter
 func NewMCPHandler(rm *repository.GitManager, ollamaURL string) *MCPHandler {
 	return &MCPHandler{
 		repoManager: rm,
@@ -24,7 +25,6 @@ func NewMCPHandler(rm *repository.GitManager, ollamaURL string) *MCPHandler {
 	}
 }
 
-// AuthMiddleware verifies the Bitbucket app password
 func (h *MCPHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		appPassword := r.Header.Get("X-Bitbucket-Token")
@@ -32,7 +32,6 @@ func (h *MCPHandler) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "Authentication required", http.StatusUnauthorized)
 			return
 		}
-		// Store the password in the context for later use
 		ctx := context.WithValue(r.Context(), "appPassword", appPassword)
 		next(w, r.WithContext(ctx))
 	}
@@ -62,11 +61,10 @@ func (h *MCPHandler) CloneRepositoryHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	response := map[string]string{
+	json.NewEncoder(w).Encode(map[string]string{
 		"status":    "success",
 		"repo_path": repoPath,
-	}
-	json.NewEncoder(w).Encode(response)
+	})
 }
 
 type BranchRequest struct {
@@ -91,15 +89,10 @@ func (h *MCPHandler) SwitchBranchHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	response := map[string]string{
+	json.NewEncoder(w).Encode(map[string]string{
 		"status": "success",
 		"branch": req.BranchName,
-	}
-	json.NewEncoder(w).Encode(response)
-}
-
-type FileRequest struct {
-	RepoPath string `json:"repo_path"`
+	})
 }
 
 func (h *MCPHandler) ListFilesHandler(w http.ResponseWriter, r *http.Request) {
@@ -169,8 +162,7 @@ func (h *MCPHandler) UpdateFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]string{"status": "success"}
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 }
 
 type CommitRequest struct {
@@ -195,8 +187,7 @@ func (h *MCPHandler) CommitChangesHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	response := map[string]string{"status": "success"}
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 }
 
 func (h *MCPHandler) PushChangesHandler(w http.ResponseWriter, r *http.Request) {
@@ -219,8 +210,7 @@ func (h *MCPHandler) PushChangesHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	response := map[string]string{"status": "success"}
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 }
 
 type CodeReviewRequest struct {
@@ -241,23 +231,7 @@ func (h *MCPHandler) RequestCodeReviewHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Prepare files for LLM review
-	var filesForReview []map[string]string
-	for _, filePath := range req.FilePaths {
-		content, err := h.repoManager.GetFileContent(req.RepoPath, filePath)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to read file %s: %v", filePath, err), http.StatusInternalServerError)
-			return
-		}
-
-		filesForReview = append(filesForReview, map[string]string{
-			"file_path": filePath,
-			"content":   content,
-		})
-	}
-
-	// Call Ollama API for code review
-	reviewResults, err := h.callOllamaForReview(filesForReview, req.Instructions)
+	reviewResults, err := h.callOllamaForReview(req.RepoPath, req.FilePaths, req.Instructions)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("LLM review failed: %v", err), http.StatusInternalServerError)
 		return
@@ -266,13 +240,27 @@ func (h *MCPHandler) RequestCodeReviewHandler(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(reviewResults)
 }
 
-func (h *MCPHandler) callOllamaForReview(files []map[string]string, instructions string) ([]map[string]interface{}, error) {
-	// Use h.ollamaURL instead of hardcoded URL
+func (h *MCPHandler) callOllamaForReview(repoPath string, filePaths []string, instructions string) ([]map[string]interface{}, error) {
+	var filesForReview []map[string]string
+
+	for _, filePath := range filePaths {
+		content, err := h.repoManager.GetFileContent(repoPath, filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read file %s: %v", filePath, err)
+		}
+
+		filesForReview = append(filesForReview, map[string]string{
+			"file_path": filePath,
+			"content":   content,
+		})
+	}
+
 	ollamaURL := h.ollamaURL + "/api/generate"
-	
+	prompt := h.buildPrompt(filesForReview, instructions)
+
 	requestBody := map[string]interface{}{
 		"model":  "llama3",
-		"prompt": buildPrompt(files, instructions),
+		"prompt": prompt,
 		"stream": false,
 	}
 
@@ -281,49 +269,24 @@ func (h *MCPHandler) callOllamaForReview(files []map[string]string, instructions
 		return nil, fmt.Errorf("failed to marshal request: %v", err)
 	}
 
-	resp, err := http.Post(ollamaURL, "application/json", strings.NewReader(string(jsonBody)))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "POST", ollamaURL, strings.NewReader(string(jsonBody)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call Ollama API: %v", err)
 	}
 	defer resp.Body.Close()
 
-	// Prepare the prompt for Ollama
-	var prompt strings.Builder
-	prompt.WriteString("Please review the following code files and provide feedback based on these instructions:\n")
-	prompt.WriteString(instructions + "\n\n")
-
-	for _, file := range files {
-		prompt.WriteString(fmt.Sprintf("File: %s\n", file["file_path"]))
-		prompt.WriteString("Content:\n```\n")
-		prompt.WriteString(file["content"])
-		prompt.WriteString("\n```\n\n")
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama API returned status: %d", resp.StatusCode)
 	}
-
-	prompt.WriteString("Please provide your review with:\n")
-	prompt.WriteString("- Code quality assessment\n")
-	prompt.WriteString("- Suggested improvements\n")
-	prompt.WriteString("- Any security concerns\n")
-	prompt.WriteString("- Best practices recommendations\n")
-	prompt.WriteString("- Specific code changes if applicable\n")
-
-	// Call Ollama API (simplified example)
-	ollamaURL := "http://localhost:11434/api/generate"
-	requestBody := map[string]interface{}{
-		"model":  "llama3",
-		"prompt": prompt.String(),
-		"stream": false,
-	}
-
-	jsonBody, err := json.Marshal(requestBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %v", err)
-	}
-
-	resp, err := http.Post(ollamaURL, "application/json", strings.NewReader(string(jsonBody)))
-	if err != nil {
-		return nil, fmt.Errorf("failed to call Ollama API: %v", err)
-	}
-	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -337,29 +300,25 @@ func (h *MCPHandler) callOllamaForReview(files []map[string]string, instructions
 		return nil, fmt.Errorf("failed to parse response: %v", err)
 	}
 
-	// Process the response into a structured format
-	// This is a simplified example - you might want to parse the response more carefully
-	results := []map[string]interface{}{
+	return []map[string]interface{}{
 		{
 			"review": ollamaResponse.Response,
 		},
-	}
-
-	return results, nil
+	}, nil
 }
 
-func buildPrompt(files []map[string]string, instructions string) string {
+func (h *MCPHandler) buildPrompt(files []map[string]string, instructions string) string {
 	var prompt strings.Builder
 	prompt.WriteString("Please review the following code files and provide feedback based on these instructions:\n")
 	prompt.WriteString(instructions + "\n\n")
-	
+
 	for _, file := range files {
 		prompt.WriteString(fmt.Sprintf("File: %s\n", file["file_path"]))
 		prompt.WriteString("Content:\n```\n")
 		prompt.WriteString(file["content"])
 		prompt.WriteString("\n```\n\n")
 	}
-	
+
 	prompt.WriteString("Please provide your review with:\n")
 	prompt.WriteString("- Code quality assessment\n")
 	prompt.WriteString("- Suggested improvements\n")
